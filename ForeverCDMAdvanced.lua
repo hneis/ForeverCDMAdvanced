@@ -352,10 +352,9 @@ end
 local function newBar(name)
     local id = profile.nextBarID
     profile.nextBarID = id + 1
-    local offset = (#profile.bars * 54) - 170
     profile.bars[#profile.bars + 1] = {
         id=id, name=trim(name) ~= "" and trim(name) or ("Bar " .. id), rows=1, columns=4,
-        size=36, spacing=4, growX="RIGHT", growY="DOWN", pos={"CENTER", 0, offset},
+        size=36, spacing=4, growX="RIGHT", growY="DOWN", pos={"CENTER", 0, 0},
         anchor=nil, procCooldownMode="red", entries={},
     }
     changed()
@@ -881,7 +880,7 @@ local function layoutBar(bar)
     end
     for index, f in ipairs(visible) do
         local zero = index - 1
-        local gridRow, col = math.floor(zero / bar.columns), math.mod(zero, bar.columns)
+        local gridRow, col = math.floor(zero / bar.columns), zero % bar.columns
         local x = col * (bar.size + bar.spacing) * (bar.growX == "LEFT" and -1 or 1)
         local y = gridRow * (bar.size + bar.spacing) * (bar.growY == "UP" and 1 or -1)
         local point = (bar.growY == "UP" and "BOTTOM" or "TOP") .. (bar.growX == "LEFT" and "RIGHT" or "LEFT")

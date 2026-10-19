@@ -5,7 +5,6 @@ unpack = table.unpack or unpack
 tinsert = table.insert
 strlower = string.lower
 strtrim = function(value) return tostring(value or ""):match("^%s*(.-)%s*$") end
-math.mod = math.mod or function(left, right) return left % right end
 UISpecialFrames, SlashCmdList = {}, {}
 
 local function fail(message)
@@ -114,8 +113,19 @@ Minimap = object("Frame", "Minimap")
 Minimap.width, Minimap.height = 140, 140
 GameTooltip = object("Tooltip", "GameTooltip")
 GetCursorPosition = function() return 0, 0 end
-MouseIsOver = function() return false end
 SetCursor, ResetCursor = noop, noop
+local mouseFoci = {}
+GetMouseFoci = function() return mouseFoci end
+DoesAncestryIncludeAny = function(frame, foci)
+    for _, focus in ipairs(foci or {}) do
+        local current = focus
+        while current do
+            if current == frame then return true end
+            current = current:GetParent()
+        end
+    end
+    return false
+end
 
 local macroCalls = 0
 local function macroTrap(name)
@@ -154,7 +164,15 @@ UnitCanAttack = function() return true end
 C_Timer = { NewTicker = noop, After = function(_, callback) callback() end }
 C_AddOns = { GetAddOnMetadata = function() return "test" end }
 Enum = { SpellBookSpellBank = { Player = 0 }, ItemClass = { Projectile = 6 } }
-C_SpellBook = nil
+local spellbookIDs = { 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 14251, 8676, 2003, 2004 }
+C_SpellBook = {
+    GetNumSpellBookSkillLines = function() return 1 end,
+    GetSpellBookSkillLineInfo = function() return { itemIndexOffset = 0, numSpellBookItems = #spellbookIDs, name = "General" } end,
+    GetSpellBookItemInfo = function(index)
+        local spellID = spellbookIDs[index]
+        return { spellID = spellID, name = "Spell " .. spellID, isPassive = false, isOffSpec = false }
+    end,
+}
 
 local RIPOSTE, SURPRISE = 14251, 8676
 local AURA, DEBUFF, HYBRID, SECRET_CD, SECRET_AURA = 2001, 2002, 2003, 2004, 2005
@@ -257,7 +275,35 @@ check(createButton and createButton.scripts.OnClick, "Create Bar button pathway 
 newBarBox:SetText("From UI")
 createButton.scripts.OnClick(createButton)
 equal(#API.GetBars(), 1, "Create Bar UI pathway did not create a bar")
-check(API.DeleteBar(API.GetBars()[1].id), "could not clean up UI-created bar")
+local uiBar = API.GetBars()[1]
+equal(uiBar.pos[1], "CENTER", "new bar anchor point")
+equal(uiBar.pos[2], 0, "new bar center x")
+equal(uiBar.pos[3], 0, "new bar center y")
+
+local lockButton, dropZone, spellRow
+for _, frame in ipairs(frames) do
+    if frame.kind == "Button" and frame.textValue == "Unlock bars" then lockButton = frame end
+    if frame.scripts.OnReceiveDrag then dropZone = frame end
+    if frame.id == 101 and frame.add and frame.scripts.OnDragStart and frame.scripts.OnDragStop then spellRow = frame end
+end
+check(lockButton and lockButton.scripts.OnClick, "Unlock bars button missing")
+lockButton.scripts.OnClick(lockButton)
+check(not db.settings.locked, "Unlock bars did not update core setting")
+equal(lockButton.textValue, "Lock bars", "Unlock bars label did not refresh")
+check(API.GetBarFrame(uiBar.id):IsShown(), "unlocked empty bar handle was not shown")
+lockButton.scripts.OnClick(lockButton)
+check(db.settings.locked, "Lock bars did not restore core setting")
+
+check(dropZone and spellRow, "Spellbook drag/drop controls missing")
+mouseFoci = { dropZone }
+spellRow.scripts.OnDragStart(spellRow)
+spellRow.scripts.OnDragStop(spellRow)
+mouseFoci = {}
+equal(#uiBar.entries, 1, "Spellbook drag did not add the spell")
+equal(uiBar.entries[1].spellID, 101, "Spellbook drag added the wrong spell")
+check(API.GetBarFrame(uiBar.id):IsShown(), "ready cooldown did not show its locked bar")
+
+check(API.DeleteBar(uiBar.id), "could not clean up UI-created bar")
 ForeverCDMAdvanced_ToggleConfig()
 check(not ForeverCDMAdvancedConfig:IsShown(), "config did not toggle closed")
 

@@ -300,6 +300,20 @@ local function cycle(value, choices)
     return choices[1]
 end
 
+local function mouseIsOver(frame)
+    if not (frame and GetMouseFoci) then return false end
+    local foci = GetMouseFoci()
+    if DoesAncestryIncludeAny then return DoesAncestryIncludeAny(frame, foci) end
+    for _, focus in ipairs(foci or {}) do
+        local current = focus
+        while current do
+            if current == frame then return true end
+            current = current.GetParent and current:GetParent() or nil
+        end
+    end
+    return false
+end
+
 local function nextMode(entry)
     if entry.spellID < 0 then return "cooldown" end
     local choices = {"cooldown", "aura", "debuff", "auraCooldown"}
@@ -340,7 +354,7 @@ local function newSpellRow(parent)
         local value = draggedSpell
         draggedSpell = nil
         if ResetCursor then ResetCursor() end
-        if value and win and win.dropZone and MouseIsOver(win.dropZone) then addEntry(value) end
+        if value and win and win.dropZone and mouseIsOver(win.dropZone) then addEntry(value) end
     end)
     return row
 end
