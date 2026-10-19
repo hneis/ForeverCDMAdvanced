@@ -253,6 +253,9 @@ end
 
 fire("PLAYER_LOGIN")
 local API, db = ForeverCDMAdvanced, ForeverCDMAdvancedDB
+for _, frame in ipairs(frames) do
+    check(not frame.events.COMBAT_LOG_EVENT_UNFILTERED, "forbidden combat-log event was registered")
+end
 check(db ~= legacy, "legacy DB without schemaVersion was not replaced")
 equal(db.schemaVersion, 2, "schema version")
 check(type(db.settings) == "table", "db.settings was not created")
@@ -490,7 +493,7 @@ local surpriseBar = API.CreateBar("Surprise")
 check(API.AddEntry(surpriseBar, SURPRISE), "Surprise Attack entry failed")
 local surprise = API.GetEntryFrame(surpriseBar, 1)
 now = now + 1
-check(API.ActivateReactive("surprise", targetGUID), "Surprise proc did not activate")
+fire("UNIT_COMBAT", "target", "DODGE", nil, 0, 0)
 check(surprise:IsShown(), "Surprise proc hidden on matching target")
 targetGUID = "Creature-Target-B"
 API.Refresh()

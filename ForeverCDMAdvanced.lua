@@ -1356,21 +1356,9 @@ end
 local function onUnitCombat(unit, result)
     if secret(result) or type(result) ~= "string" then return end
     if unit == "player" and result == "PARRY" then API.ActivateReactive("riposte")
-    end
-end
-
-local function onCombatLog()
-    if not CombatLogGetCurrentEventInfo then return end
-    local values = {pcall(CombatLogGetCurrentEventInfo)}
-    local ok, event = values[1], values[3]
-    if not ok or secret(event) or event ~= "SWING_MISSED" and event ~= "SPELL_MISSED" then return end
-    local sourceGUID, destGUID = values[5], values[9]
-    local missType = event == "SPELL_MISSED" and values[16] or values[13]
-    if not secret(missType) and missType == "DODGE" then
-        local player = UnitGUID and UnitGUID("player")
-        if not secret(player) and not secret(sourceGUID) and not secret(destGUID) and sourceGUID == player then
-            API.ActivateReactive("surprise", destGUID)
-        end
+    elseif unit == "target" and result == "DODGE" then
+        local target = currentTargetGUID()
+        if target then API.ActivateReactive("surprise", target) end
     end
 end
 
@@ -1386,19 +1374,18 @@ ev:SetScript("OnEvent", function(self, event, ...)
         configChanged()
         for _, name in ipairs({"SPELL_UPDATE_COOLDOWN", "SPELL_UPDATE_CHARGES", "PLAYER_TARGET_CHANGED", "SPELLS_CHANGED",
             "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "BAG_UPDATE_COOLDOWN", "BAG_UPDATE_DELAYED",
-            "PLAYER_EQUIPMENT_CHANGED", "GET_ITEM_INFO_RECEIVED", "COMBAT_LOG_EVENT_UNFILTERED"}) do
-            pcall(self.RegisterEvent, self, name)
+            "PLAYER_EQUIPMENT_CHANGED", "GET_ITEM_INFO_RECEIVED"}) do
+            self:RegisterEvent(name)
         end
-        pcall(self.RegisterUnitEvent, self, "UNIT_AURA", "player", "target")
-        pcall(self.RegisterUnitEvent, self, "UNIT_SPELLCAST_SUCCEEDED", "player")
-        pcall(self.RegisterUnitEvent, self, "UNIT_COMBAT", "player", "target")
+        self:RegisterUnitEvent("UNIT_AURA", "player", "target")
+        self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        self:RegisterUnitEvent("UNIT_COMBAT", "player", "target")
         if ForeverCDMAdvanced_InitMinimap then ForeverCDMAdvanced_InitMinimap() end
         local version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?"
         say("v%s loaded. /fcdma opens settings.", tostring(version))
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then onPlayerCast(...)
     elseif event == "UNIT_AURA" then onAuraEvent(...) refreshAll()
     elseif event == "UNIT_COMBAT" then onUnitCombat(...)
-    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then onCombatLog()
     elseif event == "PLAYER_REGEN_DISABLED" then inCombat = true updateInteractions(true)
     elseif event == "PLAYER_REGEN_ENABLED" then inCombat = false updateInteractions(false)
     elseif event == "SPELLS_CHANGED" then buildRankIndex() refreshAll() configChanged()
