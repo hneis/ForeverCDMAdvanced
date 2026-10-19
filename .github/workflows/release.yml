@@ -1,10 +1,7 @@
 name: Release
 
-# Same shape as DelveGuide's pipeline: a v* tag builds the zip with the
-# BigWigs packager and uploads it to the GitHub release, and to CurseForge
-# once two things exist: the CF_API_KEY repository secret, and a
-# "## X-Curse-Project-ID" line in ForeverCDM.toc (the packager reads it).
-# Until CurseForge offers a Forever game version, only the GitHub release runs.
+# A v* tag runs the tests, builds the zip with the BigWigs packager and
+# uploads it to the GitHub release.
 
 on:
   push:
@@ -26,16 +23,12 @@ jobs:
 
       - name: Run the tests
         run: |
-          sudo apt-get install -y -qq lua5.4 > /dev/null
-          lua5.4 tests/test_secret_duration.lua ForeverCDM.lua
-          lua5.4 tests/test_runtime.lua
-          lua5.4 tests/test_cast_tracking.lua
-          lua5.4 tests/test_persist.lua
-          lua5.4 tests/test_debuffs.lua
-          lua5.4 tests/test_combine.lua
+          sudo apt-get install -y -qq lua5.1 > /dev/null
+          luac5.1 -p ForeverCDMAdvanced.lua
+          luac5.1 -p ForeverCDMAdvanced_UI.lua
+          lua5.1 tests/test_dynamic.lua
 
       - name: Package and upload
         uses: BigWigsMods/packager@v2
         env:
-          CF_API_KEY: ${{ secrets.CF_API_KEY }}
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}

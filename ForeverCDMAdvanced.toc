@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: |cffd2621fForever CDM|r Advanced
+## Notes: Dynamic cooldown, aura, debuff and reactive icon bars for World of Warcraft: Forever.
+## Author: hneis, Thunderz
+## Version: 0.1.0
+## SavedVariables: ForeverCDMAdvancedDB
+## IconTexture: Interface\AddOns\ForeverCDMAdvanced\media\icon.tga
+
+ForeverCDMAdvanced.lua
+ForeverCDMAdvanced_UI.lua

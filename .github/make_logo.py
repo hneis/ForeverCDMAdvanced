@@ -1,4 +1,4 @@
-"""Forever Cooldown Manager logo: an ability-icon frame with a cooldown sweep.
+"""Forever CDM Advanced logo: an ability-icon frame with a cooldown sweep.
 All original vector drawing (no game art). Drawn at 4x and downsampled for clean edges."""
 import math
 import sys
@@ -94,7 +94,7 @@ try:
     word_font.set_variation_by_name("SemiBold")
 except Exception:
     pass
-word = "FOREVER  CDM"
+word = "FOREVER CDM ADV"
 wb = d.textbbox((0, 0), word, font=word_font)
 d.text((cx - (wb[2] + wb[0]) / 2, box[3] + N * 0.045), word, font=word_font, fill=AMBER + (255,))
 
