@@ -10,10 +10,18 @@ local INACTIVE = { show=true, hide=true }
 local GROW_X = { RIGHT=true, LEFT=true }
 local GROW_Y = { DOWN=true, UP=true }
 local PROC_CD = { red=true, hide=true }
+local BORDER_MODES = { eui=true, solid=true, none=true }
+local BORDER_SOURCES = { MainBar=true, Bar2=true, Bar3=true, Bar4=true, Bar5=true, Bar6=true,
+    Bar7=true, Bar8=true, Bar9=true, Bar10=true }
+local FONT_FACES = { ellesmere=true, friz=true, arial=true, skurri=true, morpheus=true }
+local FONT_OUTLINES = { NONE=true, OUTLINE=true, THICKOUTLINE=true }
+local DEFAULT_BORDER_COLOR = {r=0, g=0, b=0, a=1}
+local DEFAULT_PROC_COLOR = {r=1, g=0.82, b=0.1, a=1}
 
 local db, profile
 local rows, icons, entryRuntime = {}, {}, {}
 local runtimeGeneration = 1
+local cooldownDriver
 local ranks, siblings, knownSpells, knownNames = {}, {}, {}, {}
 local spellbookScanned = false
 local editModeActive, inCombat, itemNamesPending = false, false, false
@@ -34,6 +42,32 @@ end
 local function trim(s)
     if strtrim then return strtrim(s or "") end
     return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function validColor(value)
+    if type(value) ~= "table" or secret(value) or secretTable(value) then return nil end
+    local out = {}
+    for _, key in ipairs({"r", "g", "b", "a"}) do
+        local component = value[key]
+        if secret(component) or type(component) ~= "number" or component ~= component or component < 0 or component > 1 then return nil end
+        out[key] = component
+    end
+    return out
+end
+
+local function normalizeColor(value, fallback)
+    return validColor(value) or {r=fallback.r, g=fallback.g, b=fallback.b, a=fallback.a}
+end
+
+local function normalizeNumber(value, fallback, minimum, maximum)
+    if secret(value) then return fallback end
+    value = tonumber(value)
+    if not value or value ~= value then return fallback end
+    return math.max(minimum, math.min(maximum, value))
+end
+
+local function enumOr(values, value, fallback)
+    return not secret(value) and values[value] and value or fallback
 end
 
 -- Database and profiles -------------------------------------------------------
@@ -72,6 +106,7 @@ local function freshProfile()
 end
 
 local function normalizeProfile(saved)
+    if type(saved) ~= "table" or secret(saved) or secretTable(saved) then saved = freshProfile() end
     saved.bars = type(saved.bars) == "table" and saved.bars or {}
     local usedBars, usedEntries, maxBar, maxEntry = {}, {}, 0, 0
     for index, bar in ipairs(saved.bars) do
@@ -90,6 +125,16 @@ local function normalizeProfile(saved)
         bar.growX = GROW_X[bar.growX] and bar.growX or "RIGHT"
         bar.growY = GROW_Y[bar.growY] and bar.growY or "DOWN"
         bar.procCooldownMode = PROC_CD[bar.procCooldownMode] and bar.procCooldownMode or "red"
+        bar.borderMode = enumOr(BORDER_MODES, bar.borderMode, "eui")
+        bar.borderSource = enumOr(BORDER_SOURCES, bar.borderSource, "MainBar")
+        bar.borderColor = normalizeColor(bar.borderColor, DEFAULT_BORDER_COLOR)
+        bar.borderSize = normalizeNumber(bar.borderSize, 1, 0, 8)
+        if secret(bar.procGlowEnabled) or type(bar.procGlowEnabled) ~= "boolean" then bar.procGlowEnabled = true end
+        bar.procGlowColor = normalizeColor(bar.procGlowColor, DEFAULT_PROC_COLOR)
+        bar.procGlowSize = normalizeNumber(bar.procGlowSize, 8, 0, 20)
+        bar.fontFace = enumOr(FONT_FACES, bar.fontFace, "ellesmere")
+        bar.fontSize = normalizeNumber(bar.fontSize, 14, 6, 64)
+        bar.fontOutline = enumOr(FONT_OUTLINES, bar.fontOutline, "OUTLINE")
         local validPoints = {CENTER=true, TOP=true, BOTTOM=true, LEFT=true, RIGHT=true,
             TOPLEFT=true, TOPRIGHT=true, BOTTOMLEFT=true, BOTTOMRIGHT=true}
         bar.pos = type(bar.pos) == "table" and bar.pos or {"CENTER", 0, -170 + (index - 1) * 54}
@@ -144,6 +189,7 @@ local function selectCharacterProfile()
         db.profileKeys[guid] = name
     end
     profile = normalizeProfile(db.profiles[name])
+    db.profiles[name] = profile
 end
 
 local function ensureDB()
@@ -174,8 +220,10 @@ local function cloneProfile(p)
     for _, bar in ipairs(p.bars or {}) do
         local b = {}
         for k, v in pairs(bar) do
-            if k ~= "entries" and k ~= "pos" and k ~= "anchor" then b[k] = v end
+            if k ~= "entries" and k ~= "pos" and k ~= "anchor" and k ~= "borderColor" and k ~= "procGlowColor" then b[k] = v end
         end
+        b.borderColor = normalizeColor(bar.borderColor, DEFAULT_BORDER_COLOR)
+        b.procGlowColor = normalizeColor(bar.procGlowColor, DEFAULT_PROC_COLOR)
         b.pos = {unpack(bar.pos or {"CENTER", 0, 0})}
         if type(bar.anchor) == "table" then
             b.anchor = {}
@@ -355,7 +403,10 @@ local function newBar(name)
     profile.bars[#profile.bars + 1] = {
         id=id, name=trim(name) ~= "" and trim(name) or ("Bar " .. id), rows=1, columns=4,
         size=36, spacing=4, growX="RIGHT", growY="DOWN", pos={"CENTER", 0, 0},
-        anchor=nil, procCooldownMode="red", entries={},
+        anchor=nil, procCooldownMode="red", borderMode="eui", borderSource="MainBar",
+        borderColor={r=0,g=0,b=0,a=1}, borderSize=1, procGlowEnabled=true,
+        procGlowColor={r=1,g=0.82,b=0.1,a=1}, procGlowSize=8,
+        fontFace="ellesmere", fontSize=14, fontOutline="OUTLINE", entries={},
     }
     changed()
     return id
@@ -426,8 +477,169 @@ local function updateInteraction(bar)
     row.label:SetText("Forever CDM Advanced: " .. bar.name .. " (drag)")
 end
 
+local function euiBorder(bar)
+    local eui = EllesmereUI
+    local ns = eui and eui._ModuleNS and eui._ModuleNS["EllesmereUIActionBars"]
+    local eab = ns and ns.EAB
+    local euiProfile = eab and eab.db and eab.db.profile
+    local settings = euiProfile and euiProfile.bars and euiProfile.bars[bar.borderSource]
+    if not settings then return nil end
+    local thickness, thicknessPx = settings.borderSize or 1
+    if ns.ResolveBorderThickness then
+        local ok, resolved, resolvedPx = pcall(ns.ResolveBorderThickness, settings)
+        if ok then thickness, thicknessPx = resolved, resolvedPx end
+    end
+    thickness = tonumber(thickness) or 0
+    local texture = type(settings.borderTexture) == "string" and settings.borderTexture or "solid"
+    if thicknessPx and texture == "solid" then thickness = tonumber(thicknessPx) or thickness end
+    local rawColor = type(settings.borderColor) == "table" and not secret(settings.borderColor)
+        and not secretTable(settings.borderColor) and settings.borderColor or DEFAULT_BORDER_COLOR
+    local color = {}
+    for _, key in ipairs({"r", "g", "b", "a"}) do
+        local component = rawColor[key]
+        color[key] = not secret(component) and type(component) == "number" and component == component
+            and component >= 0 and component <= 1 and component or DEFAULT_BORDER_COLOR[key]
+    end
+    if not secret(settings.borderClassColor) and settings.borderClassColor then
+        local _, class = UnitClass("player")
+        local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        if classColor then color.r, color.g, color.b = classColor.r, classColor.g, classColor.b end
+    end
+    local exactPx
+    if eui.BorderPx then
+        local ok, value = pcall(eui.BorderPx, settings.borderThicknessPx, thickness, texture)
+        if ok then exactPx = value end
+    end
+    local signature = table.concat({
+        "eui", bar.borderSource, texture, tostring(thickness), tostring(thicknessPx),
+        tostring(color.r), tostring(color.g), tostring(color.b), tostring(color.a),
+        tostring(settings.borderTextureOffset), tostring(settings.borderTextureOffsetY),
+        tostring(settings.borderTextureShiftX), tostring(settings.borderTextureShiftY),
+        tostring(settings.borderThickness), tostring(settings.borderThicknessPx),
+        tostring(settings.borderBehind), tostring(settings.borderAboveEffects), tostring(exactPx),
+        tostring(eui.ApplyBorderStyle),
+    }, ":")
+    return {eui=eui, settings=settings, texture=texture, thickness=math.max(0, thickness),
+        color=color, exactPx=exactPx, signature=signature}
+end
+
+local function hideBorderVisuals(f)
+    for _, line in ipairs(f.borderLines) do line:Hide() end
+    if f.ppBorder and EllesmereUI and EllesmereUI.PP then pcall(EllesmereUI.PP.HideBorder, f) end
+    if EllesmereUI and EllesmereUI.ApplyBorderStyle then
+        pcall(EllesmereUI.ApplyBorderStyle, f.borderHost, 0, 0, 0, 0, 0, "solid")
+    end
+    f.borderHost:Hide()
+end
+
+local function showLineBorder(f, size, color)
+    if size <= 0 then return end
+    local top, bottom, left, right = unpack(f.borderLines)
+    for _, line in ipairs(f.borderLines) do line:SetColorTexture(color.r, color.g, color.b, color.a) line:Show() end
+    top:ClearAllPoints(); top:SetPoint("TOPLEFT", f, "TOPLEFT"); top:SetPoint("TOPRIGHT", f, "TOPRIGHT"); top:SetHeight(size)
+    bottom:ClearAllPoints(); bottom:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT"); bottom:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT"); bottom:SetHeight(size)
+    left:ClearAllPoints(); left:SetPoint("TOPLEFT", top, "BOTTOMLEFT"); left:SetPoint("BOTTOMLEFT", bottom, "TOPLEFT"); left:SetWidth(size)
+    right:ClearAllPoints(); right:SetPoint("TOPRIGHT", top, "BOTTOMRIGHT"); right:SetPoint("BOTTOMRIGHT", bottom, "TOPRIGHT"); right:SetWidth(size)
+end
+
+local FONT_PATHS = {friz=[[Fonts\FRIZQT__.TTF]], arial=[[Fonts\ARIALN.TTF]],
+    skurri=[[Fonts\skurri.ttf]], morpheus=[[Fonts\MORPHEUS.ttf]]}
+local iconSerial = 0
+
+local function fontPath(face)
+    if face == "ellesmere" then
+        if EllesmereUI and EllesmereUI.GetFontPath then
+            local ok, path = pcall(EllesmereUI.GetFontPath, "actionBars")
+            if ok and type(path) == "string" and not secret(path) and path ~= "" then return path end
+        end
+        return [[Fonts\FRIZQT__.TTF]]
+    end
+    return FONT_PATHS[face] or [[Fonts\FRIZQT__.TTF]]
+end
+
+local function applyFont(f, path, size, outline)
+    local flags = outline == "NONE" and "" or outline
+    local fallback = [[Fonts\FRIZQT__.TTF]]
+    local countdown
+    if f.cd.GetCountdownFontString then
+        local ok, value = pcall(f.cd.GetCountdownFontString, f.cd)
+        if ok then countdown = value end
+    end
+    if countdown and countdown.SetFont then
+        local ok, applied = pcall(countdown.SetFont, countdown, path, size, flags)
+        if not ok or applied == false then pcall(countdown.SetFont, countdown, fallback, size, flags) end
+    elseif f.cd.SetCountdownFont then
+        if not f.countdownFont then
+            f.countdownFontName = "ForeverCDMAdvancedCountdownFont" .. f.serial
+            f.countdownFont = CreateFont(f.countdownFontName)
+        end
+        local ok, applied = pcall(f.countdownFont.SetFont, f.countdownFont, path, size, flags)
+        if not ok or applied == false then pcall(f.countdownFont.SetFont, f.countdownFont, fallback, size, flags) end
+        if f.countdownFont then
+            pcall(f.cd.SetCountdownFont, f.cd, f.countdownFontName)
+        end
+    end
+    local ok, applied = pcall(f.count.SetFont, f.count, path, size, flags)
+    if not ok or applied == false then pcall(f.count.SetFont, f.count, fallback, size, flags) end
+end
+
+local function applyAppearance(f, bar)
+    local eui = bar.borderMode == "eui" and euiBorder(bar) or nil
+    local path = fontPath(bar.fontFace)
+    local borderSignature
+    if bar.borderMode == "eui" then
+        borderSignature = eui and eui.signature or table.concat({"fallback", bar.borderColor.r, bar.borderColor.g,
+            bar.borderColor.b, bar.borderColor.a, bar.borderSize}, ":")
+    else
+        borderSignature = table.concat({bar.borderMode, bar.borderColor.r, bar.borderColor.g,
+            bar.borderColor.b, bar.borderColor.a, bar.borderSize}, ":")
+    end
+    local signature = table.concat({borderSignature, path, bar.fontSize, bar.fontOutline}, "|")
+    if f.appearanceSignature == signature then return end
+    f.appearanceSignature = signature
+    hideBorderVisuals(f)
+    if bar.borderMode == "solid" then
+        showLineBorder(f, bar.borderSize, bar.borderColor)
+    elseif bar.borderMode == "eui" and eui then
+        local settings = eui.settings
+        if eui.texture ~= "" and eui.texture ~= "solid" and eui.eui.ApplyBorderStyle and eui.thickness > 0 then
+            f.borderHost:ClearAllPoints()
+            f.borderHost:SetAllPoints(f)
+            local baseLevel = f:GetFrameLevel() or 1
+            if settings.borderBehind then f.borderHost:SetFrameLevel(math.max(0, baseLevel - 1))
+            elseif settings.borderAboveEffects then f.borderHost:SetFrameLevel(baseLevel + 8)
+            else f.borderHost:SetFrameLevel(baseLevel + 2) end
+            local ok = pcall(eui.eui.ApplyBorderStyle, f.borderHost, eui.thickness,
+                eui.color.r, eui.color.g, eui.color.b, eui.color.a, eui.texture,
+                settings.borderTextureOffset, settings.borderTextureOffsetY,
+                settings.borderTextureShiftX, settings.borderTextureShiftY,
+                "actionbars", settings.borderThickness or "thin", nil, eui.exactPx)
+            if ok then f.borderHost:Show() else showLineBorder(f, eui.thickness, eui.color) end
+        elseif eui.texture == "solid" and eui.thickness > 0 and eui.eui.PP then
+            local pp = eui.eui.PP
+            if not f.ppBorder then
+                local ok = pcall(pp.CreateBorder, f, 0, 0, 0, 1, 1, "OVERLAY", -1)
+                f.ppBorder = ok and true or nil
+            end
+            if f.ppBorder then
+                pcall(pp.UpdateBorder, f, eui.thickness, eui.color.r, eui.color.g, eui.color.b, eui.color.a)
+                pcall(pp.ShowBorder, f)
+            else
+                showLineBorder(f, eui.thickness, eui.color)
+            end
+        else
+            showLineBorder(f, eui.thickness, eui.color)
+        end
+    elseif bar.borderMode == "eui" then
+        showLineBorder(f, bar.borderSize, bar.borderColor)
+    end
+    applyFont(f, path, bar.fontSize, bar.fontOutline)
+end
+
 local function newIcon(parent)
     local f = CreateFrame("Frame", nil, parent)
+    iconSerial = iconSerial + 1
+    f.serial = iconSerial
     f.icon = f:CreateTexture(nil, "ARTWORK")
     f.icon:SetAllPoints()
     f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -439,10 +651,32 @@ local function newIcon(parent)
     f.count:SetPoint("BOTTOMRIGHT", -2, 2)
     f.name = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     f.name:SetPoint("TOP", f, "BOTTOM", 0, -1)
-    f.proc = f:CreateTexture(nil, "OVERLAY")
-    f.proc:SetAllPoints()
-    f.proc:SetColorTexture(1, 0.08, 0.08, 0.28)
+    f.proc = f:CreateTexture(nil, "OVERLAY", nil, 5)
+    f.proc:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.proc:SetBlendMode("ADD")
     f.proc:Hide()
+    f.borderLines = {}
+    for i = 1, 4 do f.borderLines[i] = f:CreateTexture(nil, "OVERLAY", nil, 7) end
+    f.borderHost = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    f.borderHost:SetAllPoints(f)
+    f.borderHost:EnableMouse(false)
+    f.borderHost:Hide()
+    if not cooldownDriver then
+        cooldownDriver = CreateFrame("Frame", nil, UIParent)
+        cooldownDriver:SetSize(1, 1)
+        cooldownDriver:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT")
+        cooldownDriver:EnableMouse(false)
+        cooldownDriver:SetAlpha(0)
+        cooldownDriver:Show()
+    end
+    f.cdTracker = CreateFrame("Cooldown", nil, cooldownDriver, "CooldownFrameTemplate")
+    f.cdTracker:SetSize(1, 1)
+    f.cdTracker:SetPoint("BOTTOMLEFT", cooldownDriver, "BOTTOMLEFT")
+    f.cdTracker:SetAlpha(0)
+    f.cdTracker:SetHideCountdownNumbers(true)
+    if f.cdTracker.SetDrawSwipe then f.cdTracker:SetDrawSwipe(false) end
+    if f.cdTracker.SetDrawEdge then f.cdTracker:SetDrawEdge(false) end
+    f.trackerProxy = {cd=f.cdTracker, count={SetText=function() end}}
     f:EnableMouse(false)
     f.cd:SetScript("OnCooldownDone", function()
         if f.callbackGeneration ~= runtimeGeneration then return end
@@ -464,6 +698,14 @@ local function newIcon(parent)
             f.auraUID = nil
             refreshAll()
         end
+    end)
+    f.cdTracker:SetScript("OnCooldownDone", function()
+        if f.trackerGeneration ~= runtimeGeneration or f.trackerUID ~= f.uid then return end
+        local uid = f.trackerUID
+        f.trackerUID = nil
+        local runtime = uid and entryRuntime[uid]
+        if runtime then runtime.latched, runtime.latchedAt = nil, nil end
+        refreshAll()
     end)
     return f
 end
@@ -556,6 +798,15 @@ local function clearCooldown(f)
     if f.cd.Clear then f.cd:Clear() else f.cd:SetCooldown(0, 0) end
 end
 
+local function resetTracker(f)
+    f.trackerUID, f.trackerGeneration = nil, nil
+    if f.cdTracker.Clear then f.cdTracker:Clear() else f.cdTracker:SetCooldown(0, 0) end
+end
+
+local function resetIconTransient(f)
+    f.proc:Hide()
+end
+
 -- Returns true/false when readable and nil when the client only exposes a duration object.
 local function drawSpellCooldown(f, id)
     local c = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(id)
@@ -613,6 +864,13 @@ local function drawCooldown(f, id)
     end
     f.count:SetText(not secret(count) and count ~= nil and tostring(count) or "")
     return onCD
+end
+
+local function trackCooldown(f, entry)
+    if f.trackerUID == entry.uid and f.trackerGeneration == runtimeGeneration then return end
+    resetTracker(f)
+    local onCD = drawCooldown(f.trackerProxy, entry.spellID)
+    if onCD ~= false then f.trackerUID, f.trackerGeneration = entry.uid, runtimeGeneration end
 end
 
 local function spellAuraRestricted(id)
@@ -689,11 +947,12 @@ local function readyVisible(entry)
     return entry.readyVisibility == "always" or (entry.readyVisibility == "combat" and inCombat)
 end
 
-local function stateForEntry(f, entry, bar)
+local function stateForEntry(f, entry, bar, final)
     f.cooldownUID, f.auraUID = nil, nil
     local state = {entry=entry, visible=true, alpha=1, active=false, desaturated=false}
     local runtime = entryRuntime[entry.uid]
     if not entryAvailable(entry) then
+        if final then resetTracker(f) end
         clearCooldown(f)
         f.count:SetText("")
         state.visible = not db.settings.locked or editModeActive
@@ -706,8 +965,8 @@ local function stateForEntry(f, entry, bar)
         local now = GetTime()
         local proc = runtime.procUntil and now < runtime.procUntil
         if proc and entry.reactive == "surprise" and runtime.targetGUID then
-            local current = UnitGUID and UnitGUID("target")
-            if not secret(current) and current ~= runtime.targetGUID then proc = false end
+            local current = currentTargetGUID()
+            if current and current ~= runtime.targetGUID then proc = false end
         end
         local latched = runtime.latched
         if proc then
@@ -717,13 +976,18 @@ local function stateForEntry(f, entry, bar)
                 runtime.latched, runtime.latchedAt = nil, nil
                 latched = nil
             end
-            local blocked = onCD ~= false or waiting
+            local blocked = onCD == true or (latched and (onCD == nil or waiting))
+            if final then
+                if blocked then trackCooldown(f, entry) else resetTracker(f) end
+            end
             state.active = true
+            state.proc = true
             state.red = blocked and bar.procCooldownMode == "red"
             state.visible = not (blocked and bar.procCooldownMode == "hide")
             f.cooldownUID = nil
             f.cd:SetCooldown(runtime.procAt or now, math.max(0.1, (runtime.procUntil or now) - (runtime.procAt or now)))
         elseif latched then
+            if final then resetTracker(f) end
             local onCD = drawCooldown(f, entry.spellID)
             local waiting = onCD == false and runtime.latchedAt and now - runtime.latchedAt < 0.75
             state.active, state.desaturated = onCD ~= false or waiting, onCD ~= false
@@ -731,6 +995,7 @@ local function stateForEntry(f, entry, bar)
             if onCD == false and not waiting then runtime.latched, runtime.latchedAt = nil, nil
             elseif onCD ~= false then f.cooldownUID = entry.uid end
         else
+            if final then resetTracker(f) end
             f.cooldownUID = nil
             clearCooldown(f)
             state.visible = not db.settings.locked or editModeActive
@@ -740,6 +1005,7 @@ local function stateForEntry(f, entry, bar)
     end
 
     if entry.mode == "cooldown" then
+        if final then resetTracker(f) end
         local onCD = drawCooldown(f, entry.spellID)
         state.active, state.desaturated = onCD ~= false, onCD == true
         state.visible = onCD ~= false or readyVisible(entry) or not db.settings.locked or editModeActive
@@ -748,6 +1014,7 @@ local function stateForEntry(f, entry, bar)
     end
 
     local aura, readable
+    if final then resetTracker(f) end
     if entry.mode == "debuff" then aura, readable = auraForTarget(entry.auraID or entry.spellID)
     else aura, readable = auraForPlayer(entry.auraID or entry.spellID) end
     local runtimeState = entryRuntime[entry.uid]
@@ -839,13 +1106,15 @@ local function layoutBar(bar)
         local f = list[slot]
         if not f then f = newIcon(row) list[slot] = f end
         f:SetSize(bar.size, bar.size)
+        applyAppearance(f, bar)
+        resetIconTransient(f)
         f.cooldownUID, f.auraUID = nil, nil
         local chosen, chosenState
         for _, entry in ipairs(members) do
             f.cooldownUID, f.auraUID = nil, nil
             clearCooldown(f)
             f.count:SetText("")
-            local state = stateForEntry(f, entry, bar)
+            local state = stateForEntry(f, entry, bar, false)
             entryFrame[entry.uid] = f
             if not chosenState or (state.active and not chosenState.active) or (state.visible and not chosenState.visible) then
                 chosen, chosenState = entry, state
@@ -858,20 +1127,32 @@ local function layoutBar(bar)
         f.count:SetText("")
         f.uid = chosen.uid
         f.callbackGeneration = runtimeGeneration
-        chosenState = stateForEntry(f, chosen, bar)
+        if f.trackerUID and (f.trackerUID ~= chosen.uid or f.trackerGeneration ~= runtimeGeneration) then resetTracker(f) end
+        chosenState = stateForEntry(f, chosen, bar, true)
         f.entryIndex = nil
         f.icon:SetTexture(spellIcon(chosen.spellID))
         f.name:SetText(spellName(chosen.spellID))
         f.name:SetShown(db.settings.showNames)
         f:SetAlpha(chosenState.alpha or 1)
         f.icon:SetDesaturated(chosenState.desaturated or false)
-        f.proc:SetShown(chosenState.red or false)
+        local showProc = chosenState.proc and bar.procGlowEnabled
+        if showProc then
+            local glowSize, color = bar.procGlowSize, bar.procGlowColor
+            f.proc:ClearAllPoints()
+            f.proc:SetPoint("TOPLEFT", f, "TOPLEFT", -glowSize, glowSize)
+            f.proc:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", glowSize, -glowSize)
+            if chosenState.red then f.proc:SetVertexColor(1, 0, 0, color.a)
+            else f.proc:SetVertexColor(color.r, color.g, color.b, color.a) end
+        end
+        f.proc:SetShown(showProc or false)
         if chosenState.visible then visible[#visible + 1] = f f:Show() else f:Hide() end
     end
     for i = #groups + 1, #list do
         local f = list[i]
         f.cooldownUID, f.auraUID, f.uid, f.callbackGeneration = nil, nil, nil, nil
         clearCooldown(f)
+        resetIconTransient(f)
+        resetTracker(f)
         f:Hide()
     end
     for index, entry in ipairs(bar.entries) do
@@ -969,6 +1250,8 @@ function API.DeleteBar(id)
     for _, icon in ipairs(icons[bar.id] or {}) do
         icon.cooldownUID, icon.auraUID, icon.uid, icon.callbackGeneration = nil, nil, nil, nil
         clearCooldown(icon)
+        resetIconTransient(icon)
+        resetTracker(icon)
         icon:Hide()
     end
     for _, dependent in ipairs(profile.bars) do
@@ -1016,6 +1299,31 @@ function API.SetBarOption(id, key, value)
         if not GROW_Y[value] then return false, "growY must be DOWN or UP" end
     elseif key == "procCooldownMode" then
         if not PROC_CD[value] then return false, "procCooldownMode must be red or hide" end
+    elseif key == "borderMode" then
+        if secret(value) or not BORDER_MODES[value] then return false, "borderMode must be eui, solid, or none" end
+    elseif key == "borderSource" then
+        if secret(value) or not BORDER_SOURCES[value] then return false, "borderSource must be MainBar or Bar2-Bar10" end
+    elseif key == "borderColor" or key == "procGlowColor" then
+        value = validColor(value)
+        if not value then return false, key .. " must contain numeric r, g, b, a values from 0 to 1" end
+    elseif key == "borderSize" then
+        if secret(value) then return false, "borderSize must be 0-8" end
+        value = tonumber(value)
+        if not value or value ~= value or value < 0 or value > 8 then return false, "borderSize must be 0-8" end
+    elseif key == "procGlowEnabled" then
+        if secret(value) or type(value) ~= "boolean" then return false, "procGlowEnabled must be a boolean" end
+    elseif key == "procGlowSize" then
+        if secret(value) then return false, "procGlowSize must be 0-20" end
+        value = tonumber(value)
+        if not value or value ~= value or value < 0 or value > 20 then return false, "procGlowSize must be 0-20" end
+    elseif key == "fontFace" then
+        if secret(value) or not FONT_FACES[value] then return false, "fontFace must be ellesmere, friz, arial, skurri, or morpheus" end
+    elseif key == "fontSize" then
+        if secret(value) then return false, "fontSize must be 6-64" end
+        value = tonumber(value)
+        if not value or value ~= value or value < 6 or value > 64 then return false, "fontSize must be 6-64" end
+    elseif key == "fontOutline" then
+        if secret(value) or not FONT_OUTLINES[value] then return false, "fontOutline must be NONE, OUTLINE, or THICKOUTLINE" end
     elseif key == "pos" then
         local valid = {CENTER=true, TOP=true, BOTTOM=true, LEFT=true, RIGHT=true,
             TOPLEFT=true, TOPRIGHT=true, BOTTOMLEFT=true, BOTTOMRIGHT=true}
@@ -1363,9 +1671,12 @@ local function onUnitCombat(unit, result)
 end
 
 local ev = CreateFrame("Frame")
+ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
+    if event == "ADDON_LOADED" then
+        if db then refreshAll() end
+    elseif event == "PLAYER_LOGIN" then
         ensureDB()
         inCombat = InCombatLockdown and InCombatLockdown() and true or false
         buildRankIndex()
@@ -1491,6 +1802,18 @@ SlashCmdList.FOREVERCDMADVANCED = function(message)
         if ForeverCDMAdvanced_SetMinimapShown then ForeverCDMAdvanced_SetMinimapShown(db.settings.minimap.hide) configChanged() end
     elseif cmd == "reset" then
         for _, oldBar in ipairs(profile.bars) do stopDrag(oldBar) end
+        for id, row in pairs(rows) do
+            row.positioned, row.pendingAnchor, row.dragging = false, nil, nil
+            row:Hide()
+            for _, icon in ipairs(icons[id] or {}) do
+                icon.appearanceSignature = nil
+                icon.cooldownUID, icon.auraUID, icon.uid, icon.callbackGeneration = nil, nil, nil, nil
+                clearCooldown(icon)
+                resetIconTransient(icon)
+                resetTracker(icon)
+                icon:Hide()
+            end
+        end
         ForeverCDMAdvancedDB = freshDB()
         db = ForeverCDMAdvancedDB
         selectCharacterProfile()

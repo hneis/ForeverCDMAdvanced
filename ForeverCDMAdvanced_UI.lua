@@ -489,6 +489,112 @@ local function setControlEnabled(control, enabled)
     if control.label then control.label:SetTextColor(enabled and 1 or 0.4, enabled and 1 or 0.4, enabled and 1 or 0.42) end
 end
 
+local borderModeNames = { none = "None", solid = "Solid", eui = "EUI sync" }
+local fontFaceNames = { ellesmere = "EUI", friz = "Friz", arial = "Arial", skurri = "Skurri", morpheus = "Morpheus" }
+local fontOutlineNames = { NONE = "None", OUTLINE = "Outline", THICKOUTLINE = "Thick" }
+
+local function colorComponents(color, defaultR, defaultG, defaultB, defaultA)
+    color = type(color) == "table" and color or {}
+    return tonumber(color.r or color[1]) or defaultR,
+        tonumber(color.g or color[2]) or defaultG,
+        tonumber(color.b or color[3]) or defaultB,
+        tonumber(color.a or color[4]) or defaultA
+end
+
+local function pickerColor(alpha, modern)
+    local r, g, b = ColorPickerFrame:GetColorRGB()
+    if modern and ColorPickerFrame.GetColorAlpha then
+        local ok, value = pcall(ColorPickerFrame.GetColorAlpha, ColorPickerFrame)
+        if ok and type(value) == "number" then alpha = value end
+    elseif OpacitySliderFrame and OpacitySliderFrame.GetValue then
+        alpha = 1 - OpacitySliderFrame:GetValue()
+    end
+    return r, g, b, alpha
+end
+
+local function openBarColorPicker(key, defaults)
+    local bar = currentBar()
+    if not bar or not ColorPickerFrame then return end
+    local barID = bar.id
+    local r, g, b, a = colorComponents(bar[key], defaults[1], defaults[2], defaults[3], defaults[4])
+    local original = { r = r, g = g, b = b, a = a }
+    local modern = ColorPickerFrame.SetupColorPickerAndShow ~= nil
+    local function setColor(color)
+        local ok, reason = CDM.SetBarOption(barID, key, color)
+        if not ok then rejected(reason, "Color was rejected.") end
+        if refreshUI then refreshUI() end
+    end
+    local function apply()
+        local newR, newG, newB, newA = pickerColor(a, modern)
+        setColor({ r = newR, g = newG, b = newB, a = newA })
+    end
+    local function cancel() setColor({ r = original.r, g = original.g, b = original.b, a = original.a }) end
+    if modern then
+        ColorPickerFrame:SetupColorPickerAndShow({
+            r = r, g = g, b = b, opacity = a, hasOpacity = true,
+            swatchFunc = apply, opacityFunc = apply, cancelFunc = cancel,
+        })
+    else
+        ColorPickerFrame:Hide()
+        ColorPickerFrame.hasOpacity = true
+        ColorPickerFrame.opacity = 1 - a
+        ColorPickerFrame.previousValues = { r = r, g = g, b = b, a = a }
+        ColorPickerFrame.func = apply
+        ColorPickerFrame.opacityFunc = apply
+        ColorPickerFrame.cancelFunc = cancel
+        ColorPickerFrame:SetColorRGB(r, g, b)
+        ColorPickerFrame:Show()
+    end
+end
+
+local function setAppearanceStepperEnabled(stepper, enabled)
+    setControlEnabled(stepper.minus, enabled)
+    setControlEnabled(stepper.plus, enabled)
+    stepper.caption:SetTextColor(enabled and DIM[1] or 0.35, enabled and DIM[2] or 0.35, enabled and DIM[3] or 0.37)
+    stepper.value:SetTextColor(enabled and 1 or 0.4, enabled and 1 or 0.4, enabled and 1 or 0.42)
+end
+
+local function setSwatchEnabled(swatch, enabled)
+    swatch:SetEnabled(enabled)
+    swatch.caption:SetTextColor(enabled and DIM[1] or 0.35, enabled and DIM[2] or 0.35, enabled and DIM[3] or 0.37)
+    swatch.color:SetAlpha(enabled and 1 or 0.35)
+end
+
+local function refreshAppearance(bar)
+    if not (win and win.appearancePanel) then return end
+    local a = win.appearance
+    local enabled = bar ~= nil
+    local borderMode = bar and bar.borderMode or "none"
+    local borderR, borderG, borderB, borderA = colorComponents(bar and bar.borderColor, 0, 0, 0, 1)
+    local glowR, glowG, glowB, glowA = colorComponents(bar and bar.procGlowColor, 1, 0.82, 0.1, 1)
+
+    a.title:SetText(bar and ("APPEARANCE  -  " .. tostring(bar.name or bar.id)) or "APPEARANCE  -  NO BAR SELECTED")
+    a.borderMode:SetText("Border mode: " .. (borderModeNames[borderMode] or tostring(borderMode)))
+    a.borderSource:SetText("EUI source: " .. tostring(bar and bar.borderSource or "MainBar"))
+    a.borderSize.value:SetText(bar and tostring(bar.borderSize) or "-")
+    a.borderColor.color:SetColorTexture(borderR, borderG, borderB, borderA)
+    a.procGlow:SetChecked(bar and bar.procGlowEnabled and true or false)
+    a.glowSize.value:SetText(bar and tostring(bar.procGlowSize) or "-")
+    a.glowColor.color:SetColorTexture(glowR, glowG, glowB, glowA)
+    a.fontFace:SetText("Font face: " .. (fontFaceNames[bar and bar.fontFace] or "-"))
+    a.fontSize.value:SetText(bar and tostring(bar.fontSize) or "-")
+    a.fontOutline:SetText("Outline: " .. (fontOutlineNames[bar and bar.fontOutline] or "-"))
+
+    setControlEnabled(a.borderMode, enabled)
+    a.borderSource:SetShown(enabled and borderMode == "eui")
+    a.euiHint:SetShown(enabled and borderMode == "eui")
+    setControlEnabled(a.borderSource, enabled and borderMode == "eui")
+    setAppearanceStepperEnabled(a.borderSize, enabled and borderMode ~= "eui")
+    setSwatchEnabled(a.borderColor, enabled and borderMode ~= "eui")
+    a.procGlow:SetEnabled(enabled)
+    a.procGlow.label:SetTextColor(enabled and 1 or 0.4, enabled and 1 or 0.4, enabled and 1 or 0.42)
+    setAppearanceStepperEnabled(a.glowSize, enabled and bar.procGlowEnabled)
+    setSwatchEnabled(a.glowColor, enabled and bar.procGlowEnabled)
+    setControlEnabled(a.fontFace, enabled)
+    setAppearanceStepperEnabled(a.fontSize, enabled)
+    setControlEnabled(a.fontOutline, enabled)
+end
+
 refreshUI = function()
     if not win then return end
     local activeProfile = CDM.ActiveProfile()
@@ -507,6 +613,8 @@ refreshUI = function()
     setControlEnabled(win.deleteButton, bar ~= nil)
     setControlEnabled(win.autoButton, bar ~= nil)
     setControlEnabled(win.clearButton, bar ~= nil)
+    setControlEnabled(win.appearanceButton, bar ~= nil)
+    refreshAppearance(bar)
 
     if bar then
         win.sizeValue:SetText(tostring(bar.size))
@@ -690,9 +798,16 @@ local function build()
     local detail = card(win, "SELECTED BAR", 514, 452, top, bottom)
     win.barTitle = text(detail, "GameFontNormal", "No bar selected")
     win.barTitle:SetPoint("TOPLEFT", 10, -28)
-    win.barTitle:SetPoint("RIGHT", -10, 0)
+    win.barTitle:SetPoint("RIGHT", -126, 0)
     win.barTitle:SetJustifyH("LEFT")
     win.barTitle:SetWordWrap(false)
+    win.appearanceButton = flatButton(detail, "Appearance...", 108, 22, function()
+        if currentBar() then
+            refreshAppearance(currentBar())
+            win.appearanceOverlay:Show()
+        end
+    end)
+    win.appearanceButton:SetPoint("TOPRIGHT", -10, -23)
 
     win.dropZone = CreateFrame("Frame", nil, detail)
     win.dropZone:SetPoint("TOPLEFT", 8, -50)
@@ -879,6 +994,125 @@ local function build()
         changed()
     end)
     win.fadeButton:SetPoint("TOPLEFT", 276, -456)
+
+    win.appearanceOverlay = CreateFrame("Frame", nil, win)
+    win.appearanceOverlay:SetAllPoints(win)
+    win.appearanceOverlay:SetFrameLevel(win:GetFrameLevel() + 20)
+    win.appearanceOverlay:EnableMouse(true)
+    fill(win.appearanceOverlay, "BACKGROUND", { 0, 0, 0 }, 0.72)
+
+    win.appearancePanel = CreateFrame("Frame", nil, win.appearanceOverlay)
+    win.appearancePanel:SetSize(570, 500)
+    win.appearancePanel:SetPoint("CENTER")
+    win.appearancePanel:SetFrameLevel(win.appearanceOverlay:GetFrameLevel() + 1)
+    fill(win.appearancePanel, "BACKGROUND", BG, 0.995)
+    outline(win.appearancePanel, LINE)
+
+    local appearance = {}
+    win.appearance = appearance
+    appearance.title = text(win.appearancePanel, "GameFontNormal", "APPEARANCE", ACCENT)
+    appearance.title:SetPoint("TOPLEFT", 16, -16)
+    appearance.title:SetPoint("RIGHT", -90, 0)
+    appearance.title:SetJustifyH("LEFT")
+    appearance.title:SetWordWrap(false)
+    local appearanceClose = flatButton(win.appearancePanel, "Close", 64, 24, function() win.appearanceOverlay:Hide() end)
+    appearanceClose:SetPoint("TOPRIGHT", -12, -10)
+
+    local borderHeading = text(win.appearancePanel, "GameFontNormalSmall", "BORDER", ACCENT)
+    borderHeading:SetPoint("TOPLEFT", 18, -54)
+    appearance.borderMode = flatButton(win.appearancePanel, "Border mode: None", 250, 24, function()
+        local bar = currentBar()
+        if bar then setBarOption("borderMode", cycle(bar.borderMode, { "none", "solid", "eui" })) end
+    end)
+    appearance.borderMode:SetPoint("TOPLEFT", 18, -76)
+    appearance.borderSource = flatButton(win.appearancePanel, "EUI source: MainBar", 250, 24, function()
+        local bar = currentBar()
+        if bar then
+            setBarOption("borderSource", cycle(bar.borderSource, {
+                "MainBar", "Bar2", "Bar3", "Bar4", "Bar5", "Bar6", "Bar7", "Bar8", "Bar9", "Bar10",
+            }))
+        end
+    end)
+    appearance.borderSource:SetPoint("TOPLEFT", 302, -76)
+    appearance.euiHint = text(win.appearancePanel, "GameFontDisableSmall",
+        "Full appearance sync uses the selected EUI source. Focus and mouseover behavior are not synced.", DIM)
+    appearance.euiHint:SetPoint("TOPLEFT", 18, -108)
+    appearance.euiHint:SetWidth(534)
+    appearance.euiHint:SetJustifyH("LEFT")
+    appearance.euiHint:SetWordWrap(true)
+
+    local function appearanceStepper(label, x, y, key, minimum, maximum)
+        local stepper = {}
+        stepper.caption = text(win.appearancePanel, "GameFontHighlightSmall", label, DIM)
+        stepper.caption:SetPoint("TOPLEFT", x, y)
+        stepper.minus = flatButton(win.appearancePanel, "-", 24, 24, function()
+            local bar = currentBar()
+            if bar then setBarOption(key, math.max(minimum, math.min(maximum, (tonumber(bar[key]) or minimum) - 1))) end
+        end)
+        stepper.minus:SetPoint("TOPLEFT", x, y - 22)
+        stepper.value = text(win.appearancePanel, "GameFontHighlight", "-")
+        stepper.value:SetPoint("LEFT", stepper.minus, "RIGHT", 14, 0)
+        stepper.plus = flatButton(win.appearancePanel, "+", 24, 24, function()
+            local bar = currentBar()
+            if bar then setBarOption(key, math.max(minimum, math.min(maximum, (tonumber(bar[key]) or minimum) + 1))) end
+        end)
+        stepper.plus:SetPoint("TOPLEFT", x + 82, y - 22)
+        return stepper
+    end
+
+    local function colorSwatch(label, x, y, key, defaults)
+        local swatch = CreateFrame("Button", nil, win.appearancePanel)
+        swatch:SetSize(106, 24)
+        swatch:SetPoint("TOPLEFT", x, y - 22)
+        swatch.bg = fill(swatch, "BACKGROUND", BTN)
+        outline(swatch, LINE)
+        swatch.color = swatch:CreateTexture(nil, "ARTWORK")
+        swatch.color:SetPoint("TOPLEFT", 5, -5)
+        swatch.color:SetPoint("BOTTOMRIGHT", -5, 5)
+        swatch.caption = text(win.appearancePanel, "GameFontHighlightSmall", label, DIM)
+        swatch.caption:SetPoint("TOPLEFT", x, y)
+        swatch:SetScript("OnClick", function() openBarColorPicker(key, defaults) end)
+        swatch:SetScript("OnEnter", function(self) self.bg:SetColorTexture(BTN_HI[1], BTN_HI[2], BTN_HI[3], 1) end)
+        swatch:SetScript("OnLeave", function(self) self.bg:SetColorTexture(BTN[1], BTN[2], BTN[3], 1) end)
+        return swatch
+    end
+
+    appearance.borderSize = appearanceStepper("Solid / fallback size", 18, -146, "borderSize", 0, 8)
+    appearance.borderColor = colorSwatch("Solid / fallback color", 160, -146, "borderColor", { 0, 0, 0, 1 })
+
+    local glowDivider = win.appearancePanel:CreateTexture(nil, "ARTWORK")
+    glowDivider:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
+    glowDivider:SetHeight(1)
+    glowDivider:SetPoint("TOPLEFT", 18, -210)
+    glowDivider:SetPoint("TOPRIGHT", -18, -210)
+    local glowHeading = text(win.appearancePanel, "GameFontNormalSmall", "PROC GLOW", ACCENT)
+    glowHeading:SetPoint("TOPLEFT", 18, -228)
+    appearance.procGlow = checkbox(win.appearancePanel, "Enable proc glow", function(self)
+        setBarOption("procGlowEnabled", self:GetChecked() and true or false)
+    end)
+    appearance.procGlow:SetPoint("TOPLEFT", 18, -253)
+    appearance.glowSize = appearanceStepper("Glow size", 18, -286, "procGlowSize", 0, 20)
+    appearance.glowColor = colorSwatch("Glow color", 160, -286, "procGlowColor", { 1, 0.82, 0.1, 1 })
+
+    local fontDivider = win.appearancePanel:CreateTexture(nil, "ARTWORK")
+    fontDivider:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
+    fontDivider:SetHeight(1)
+    fontDivider:SetPoint("TOPLEFT", 18, -350)
+    fontDivider:SetPoint("TOPRIGHT", -18, -350)
+    local fontHeading = text(win.appearancePanel, "GameFontNormalSmall", "FONT", ACCENT)
+    fontHeading:SetPoint("TOPLEFT", 18, -368)
+    appearance.fontFace = flatButton(win.appearancePanel, "Font face: -", 250, 24, function()
+        local bar = currentBar()
+        if bar then setBarOption("fontFace", cycle(bar.fontFace, { "ellesmere", "friz", "arial", "skurri", "morpheus" })) end
+    end)
+    appearance.fontFace:SetPoint("TOPLEFT", 18, -392)
+    appearance.fontOutline = flatButton(win.appearancePanel, "Outline: -", 250, 24, function()
+        local bar = currentBar()
+        if bar then setBarOption("fontOutline", cycle(bar.fontOutline, { "NONE", "OUTLINE", "THICKOUTLINE" })) end
+    end)
+    appearance.fontOutline:SetPoint("TOPLEFT", 302, -392)
+    appearance.fontSize = appearanceStepper("Font size", 18, -430, "fontSize", 6, 64)
+    win.appearanceOverlay:Hide()
 
     local version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("ForeverCDMAdvanced", "Version")
     local footer = text(win, "GameFontDisableSmall", "v" .. tostring(version or "?") .. "   /fcdma help for commands")

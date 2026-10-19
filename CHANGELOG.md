@@ -12,6 +12,10 @@
 - Added Riposte and Surprise Attack proc windows. A used reactive ability remains
   visible for its actual cooldown and hides on `OnCooldownDone`.
 - Added secret-safe cooldown, charge and aura duration-object handling.
+- Added per-bar EllesmereUI border sync with solid and borderless alternatives.
+- Added configurable static proc glow with OctoCooldowns ready/blocked states.
+- Added per-bar timer/count font face, size and outline controls.
+- Added a separate Appearance panel with colour pickers.
 - Made complete bar collections and layout profile-owned.
 - Introduced schema v2 with an intentional full reset of the old static format.
 - Removed the settings macro mirror.

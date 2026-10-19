@@ -33,6 +33,23 @@ Bars can be unlocked and dragged. In Edit Mode, right-click a bar handle to
 attach it to another ForeverCDMAdvanced bar or a visible Blizzard Edit Mode
 frame. Positions and anchors are stored in the active profile.
 
+### Appearance
+
+The selected bar has a separate **Appearance** panel:
+
+- `EUI sync` copies the complete border style, thickness, colour and offsets
+  from `MainBar` or `Bar2` through `Bar10` in EllesmereUI;
+- `Solid` provides an independent colour and thickness;
+- `None` removes the border;
+- if EllesmereUI is unavailable, EUI sync falls back to the configured solid
+  border;
+- font face, size and outline apply to cooldown numbers, charges, stacks and
+  item counts;
+- the EUI action-bar font and four built-in Blizzard fonts are available.
+
+Border sync is visual only. Icon masks/shapes, focus and mouseover effects are
+not imported from EllesmereUI.
+
 ## Adding entries
 
 The custom Spellbook remains in `/fcdma`, but it no longer contains one checkbox
@@ -76,9 +93,15 @@ Riposte uses this lifecycle:
 3. When used, switches from the proc timer to the actual spell cooldown.
 4. Hides again when the cooldown widget reports completion.
 
-If another proc occurs while the ability is on cooldown, the bar can show it
-with a red state or hide it. Surprise Attack is additionally bound to the target
-that dodged.
+An active proc uses a configurable static gold glow around the icon. Glow colour,
+alpha and size belong to the bar and can be changed or disabled. A proc whose
+ability is confirmed to be on cooldown uses OctoCooldowns behaviour: red glow or
+hidden, selected by `Proc cooldown`. Secret/unknown cooldown state is not treated
+as blocked. Surprise Attack is additionally bound to the target that dodged.
+
+If the cooldown ends while a proc window is still active, an independent hidden
+tracker changes the red state back to the configured glow. After using the proc,
+the glow disappears and the normal spell cooldown remains visible.
 
 The four-second value is a catalog default and can be overridden per entry.
 
@@ -138,7 +161,7 @@ lua tests/test_dynamic.lua
 ```
 
 The integration test covers schema reset, profiles, dynamic grid layout, hard
-capacity, Combine, all entry modes, secret durations, reactive cooldown latching
-and the zero-bar UI.
+capacity, Combine, all entry modes, secret durations, reactive cooldown latching,
+EllesmereUI border sync, solid fallback, fonts, proc glow and the zero-bar UI.
 
 MIT.

@@ -41,7 +41,7 @@ for _, name in ipairs({
     "SetTextInsets", "SetFontString", "SetCheckedTexture", "SetTextColor",
     "SetJustifyH", "SetFrameStrata", "SetFrameLevel", "SetToplevel",
     "RegisterForDrag", "RegisterForClicks", "SetHighlightTexture", "SetAtlas",
-    "SetVertexColor", "EnableMouseWheel", "SetOwner", "SetSpellByID",
+    "SetBlendMode", "SetDrawSwipe", "EnableMouseWheel", "SetOwner", "SetSpellByID",
     "SetItemByID", "AddLine", "SetAllPoints", "StartMoving", "StopMovingOrSizing",
     "ClearFocus",
 }) do
@@ -55,6 +55,7 @@ function methods:GetWidth() return self.width end
 function methods:GetHeight() return self.height end
 function methods:SetScale(scale) self.scale = scale end
 function methods:GetEffectiveScale() return self.scale or 1 end
+function methods:GetFrameLevel() return self.frameLevel or 1 end
 function methods:GetCenter() return self.centerX or 0, self.centerY or 0 end
 function methods:SetPoint(...)
     local point = { ... }
@@ -68,6 +69,15 @@ function methods:SetText(value) self.textValue = value end
 function methods:GetText() return self.textValue or "" end
 function methods:SetTexture(value) self.texture = value end
 function methods:SetColorTexture(...) self.color = { ... } end
+function methods:SetVertexColor(...) self.vertexColor = { ... } end
+function methods:SetColorRGB(r, g, b) self.pickerR, self.pickerG, self.pickerB = r, g, b end
+function methods:GetColorRGB() return self.pickerR or 1, self.pickerG or 1, self.pickerB or 1 end
+function methods:GetColorAlpha() return self.pickerAlpha or 1 end
+function methods:SetupColorPickerAndShow(info)
+    self.pickerInfo, self.pickerAlpha = info, info.opacity
+    self:SetColorRGB(info.r, info.g, info.b)
+    self:Show()
+end
 function methods:SetDesaturated(value) self.desaturated = value end
 function methods:SetAlpha(value) self.alpha = value end
 function methods:SetChecked(value) self.checked = value and true or false end
@@ -102,16 +112,27 @@ end
 function methods:SetCooldownFromDurationObject(duration)
     self.cooldownKind, self.durationObject = "object", duration
 end
+function methods:SetFont(path, size, flags)
+    self.fontPath, self.fontSize, self.fontFlags = path, size, flags
+    return true
+end
+function methods:GetCountdownFontString()
+    if not self.countdownFontString then self.countdownFontString = object("FontString", nil, self) end
+    return self.countdownFontString
+end
+function methods:SetCountdownFont(name) self.countdownFontName = name end
 function methods:Clear()
     self.cooldownKind, self.cdStart, self.cdDur, self.durationObject = "clear", nil, nil, nil
 end
 
 CreateFrame = object
+CreateFont = function(name) return object("Font", name) end
 UIParent = object("Frame", "UIParent")
 UIParent.width, UIParent.height = 1920, 1080
 Minimap = object("Frame", "Minimap")
 Minimap.width, Minimap.height = 140, 140
 GameTooltip = object("Tooltip", "GameTooltip")
+ColorPickerFrame = object("Frame", "ColorPickerFrame")
 GetCursorPosition = function() return 0, 0 end
 SetCursor, ResetCursor = noop, noop
 local mouseFoci = {}
@@ -315,6 +336,12 @@ local barID = API.CreateBar("Grid")
 local bar = API.GetBar(barID)
 equal(bar.rows, 1, "default rows")
 equal(bar.columns, 4, "default columns")
+equal(bar.borderMode, "eui", "default border mode")
+equal(bar.borderSource, "MainBar", "default EUI border source")
+check(bar.procGlowEnabled, "proc glow should default on")
+equal(bar.procGlowSize, 8, "default proc glow size")
+equal(bar.fontFace, "ellesmere", "default font face")
+equal(bar.fontSize, 14, "default font size")
 check(API.GetActiveProfile().bars == API.GetBars(), "bars are not profile-owned")
 for id = 101, 104 do check(API.AddEntry(barID, id), "failed to add entry " .. id) end
 local ok, reason = API.AddEntry(barID, 105)
@@ -339,6 +366,68 @@ for index = 1, 4 do
     equal(x, expected[index][1], "row-first x for entry " .. index)
     equal(y, expected[index][2], "row-first y for entry " .. index)
 end
+local firstGridFrame = API.GetEntryFrame(barID, 1)
+check(firstGridFrame.borderLines[1]:IsShown(), "EUI-unavailable fallback border was not shown")
+equal(firstGridFrame.borderLines[1].color[1], 0, "fallback border red")
+equal(firstGridFrame.count.fontSize, 14, "count font default size")
+equal(firstGridFrame.cd.countdownFontString.fontSize, 14, "countdown font default size")
+
+local borderColor = { r = 0.2, g = 0.3, b = 0.4, a = 0.9 }
+check(API.SetBarOption(barID, "borderMode", "solid"), "solid border mode rejected")
+check(API.SetBarOption(barID, "borderColor", borderColor), "border color rejected")
+check(API.SetBarOption(barID, "borderSize", 3), "border size rejected")
+borderColor.r = 0.9
+equal(bar.borderColor.r, 0.2, "bar retained caller-owned border color table")
+equal(firstGridFrame.borderLines[1].height, 3, "solid border size was not applied")
+equal(firstGridFrame.borderLines[1].color[2], 0.3, "solid border color was not applied")
+check(API.SetBarOption(barID, "fontFace", "arial"), "font face rejected")
+check(API.SetBarOption(barID, "fontSize", 18), "font size rejected")
+check(API.SetBarOption(barID, "fontOutline", "THICKOUTLINE"), "font outline rejected")
+equal(firstGridFrame.count.fontPath, [[Fonts\ARIALN.TTF]], "count font face was not applied")
+equal(firstGridFrame.count.fontSize, 18, "count font size was not applied")
+equal(firstGridFrame.cd.countdownFontString.fontFlags, "THICKOUTLINE", "countdown outline was not applied")
+
+local euiBorderCalls = {}
+EllesmereUI = {
+    _ModuleNS = {
+        EllesmereUIActionBars = {
+            EAB = { db = { profile = { bars = { MainBar = {
+                borderTexture = "soft", borderSize = 2,
+                borderColor = { r = 0.1, g = 0.6, b = 0.9, a = 0.8 },
+                borderThickness = "medium",
+            } } } } },
+            ResolveBorderThickness = function() return 2 end,
+        },
+    },
+    ApplyBorderStyle = function(...) euiBorderCalls[#euiBorderCalls + 1] = { ... } return true end,
+    BorderPx = function() return 2 end,
+    GetFontPath = function() return [[Fonts\EUI.ttf]] end,
+}
+check(API.SetBarOption(barID, "borderMode", "eui"), "EUI border mode rejected")
+check(API.SetBarOption(barID, "fontFace", "ellesmere"), "EUI font rejected")
+check(#euiBorderCalls > 0, "EUI textured border renderer was not called")
+local latestEUI = euiBorderCalls[#euiBorderCalls]
+equal(latestEUI[7], "soft", "wrong EUI border texture forwarded")
+equal(firstGridFrame.count.fontPath, [[Fonts\EUI.ttf]], "EUI action-bar font was not applied")
+
+ForeverCDMAdvanced_ToggleConfig()
+local appearanceButton, glowSwatch, appearanceTitle
+for _, frame in ipairs(frames) do
+    if frame.kind == "Button" and frame.label and frame.label.textValue == "Appearance..." then appearanceButton = frame end
+    if frame.kind == "Button" and frame.caption and frame.caption.textValue == "Glow color" then glowSwatch = frame end
+    if frame.kind == "FontString" and type(frame.textValue) == "string" and frame.textValue:find("^APPEARANCE") then appearanceTitle = frame end
+end
+check(appearanceButton and appearanceButton.scripts.OnClick, "Appearance button missing")
+appearanceButton.scripts.OnClick(appearanceButton)
+check(appearanceTitle and appearanceTitle.textValue:find("Grid", 1, true), "Appearance panel did not select current bar")
+check(glowSwatch and glowSwatch.scripts.OnClick, "Glow color swatch missing")
+glowSwatch.scripts.OnClick(glowSwatch)
+ColorPickerFrame:SetColorRGB(0.25, 0.5, 0.75)
+ColorPickerFrame.pickerAlpha = 0.6
+ColorPickerFrame.pickerInfo.swatchFunc()
+equal(bar.procGlowColor.r, 0.25, "color picker did not update proc glow red")
+equal(bar.procGlowColor.a, 0.6, "color picker did not update proc glow alpha")
+ForeverCDMAdvanced_ToggleConfig()
 check(API.SetBarOption(barID, "growX", "LEFT"), "LEFT growth rejected")
 check(API.SetBarOption(barID, "growY", "UP"), "UP growth rejected")
 expected = { { 0, 0 }, { -40, 0 }, { 0, 40 }, { -40, 40 } }
@@ -387,10 +476,14 @@ copiedProfile.bars[1].name = "Copied Grid"
 copiedProfile.bars[1].pos[2] = 999
 copiedProfile.bars[1].anchor.x = 999
 copiedProfile.bars[1].entries[1].duration = 77
+copiedProfile.bars[1].borderColor.r = 0.99
+copiedProfile.bars[1].procGlowColor.g = 0.01
 equal(originalProfile.bars[1].name, "Grid", "copy mutation changed original bar")
 equal(originalProfile.bars[1].pos[2], 17, "copy mutation changed original position")
 equal(originalProfile.bars[1].anchor.x, 4, "copy mutation changed original anchor")
 check(originalProfile.bars[1].entries[1].duration == nil, "copy mutation changed original entry")
+equal(originalProfile.bars[1].borderColor.r, 0.2, "copy shared border color table")
+equal(originalProfile.bars[1].procGlowColor.g, 0.5, "copy shared proc glow color table")
 check(API.Profile("new", "Empty"), "new profile failed")
 equal(#API.GetBars(), 0, "new profile was not empty")
 check(API.Profile("use", originalProfileName), "profile use failed")
@@ -469,24 +562,44 @@ fire("UNIT_COMBAT", "player", "PARRY", nil, 0, 0)
 local activated, count = true, 1
 check(riposte:IsShown(), "UNIT_COMBAT did not activate Riposte")
 check(riposte:IsShown() and riposte.cd.cdStart == now and riposte.cd.cdDur == 4, "Riposte proc timer was not shown")
+check(riposte.proc:IsShown(), "ready proc glow was not shown")
+equal(riposte.proc.texture, [[Interface\SpellActivationOverlay\IconAlert]], "wrong proc glow texture")
+equal(riposte.proc.vertexColor[1], 1, "ready proc glow red")
+equal(riposte.proc.vertexColor[2], 0.82, "ready proc glow green")
+equal(riposte.proc.points[1][4], -8, "proc glow size was not applied")
 activated, count = API.ActivateReactive("riposte")
 check(not activated and count == 0, "duplicate reactive trigger was not suppressed")
+
+-- A confirmed cooldown during the proc uses Octo's red glow, not the old red fill.
 cooldowns[RIPOSTE] = { now, 6, true }
+API.Refresh()
+check(riposte.proc:IsShown(), "blocked proc glow was not shown")
+equal(riposte.proc.vertexColor[1], 1, "blocked proc glow red")
+equal(riposte.proc.vertexColor[2], 0, "blocked proc glow should be red")
 now = now + 0.1
 fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-riposte", RIPOSTE)
 check(riposte:IsShown() and riposte.cd.cdDur == 6, "successful Riposte did not latch its cooldown")
+check(not riposte.proc:IsShown(), "proc glow remained after successful use")
 check(type(riposte.cd.scripts.OnCooldownDone) == "function", "cooldown frame lacks OnCooldownDone")
+
+-- A new proc during the latched cooldown can be hidden; the independent tracker
+-- must still complete and reveal the gold proc before its window expires.
 now = now + 0.9
 activated = API.ActivateReactive("riposte")
 check(activated and riposte:IsShown() and riposte.proc:IsShown(), "proc during latched cooldown was not shown")
 activated = API.ActivateReactive("riposte")
 check(not activated, "duplicate proc during latched cooldown was not suppressed")
+check(API.SetBarOption(reactiveBar, "procCooldownMode", "hide"), "hide proc mode rejected")
+check(not riposte:IsShown(), "blocked proc was not hidden")
+check(type(riposte.cdTracker.scripts.OnCooldownDone) == "function", "hidden cooldown tracker callback missing")
+cooldowns[RIPOSTE] = nil
+riposte.cdTracker.scripts.OnCooldownDone(riposte.cdTracker)
+check(riposte:IsShown(), "tracker completion did not reveal active proc")
+check(riposte.proc:IsShown(), "tracker completion did not restore proc glow")
+equal(riposte.proc.vertexColor[2], 0.82, "tracker completion did not restore configured glow color")
 now = now + 4.1
 API.Refresh()
-equal(riposte.cd.cdDur, 6, "latched cooldown was lost after proc expiry")
-cooldowns[RIPOSTE] = nil
-riposte.cd.scripts.OnCooldownDone(riposte.cd)
-check(not riposte:IsShown(), "OnCooldownDone did not hide finished reactive icon")
+check(not riposte:IsShown(), "expired reactive proc did not hide")
 
 -- Surprise procs are tied to the target that dodged.
 local surpriseBar = API.CreateBar("Surprise")
